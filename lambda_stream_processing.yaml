@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Template to set up Kinesis stream, Lambda functions, S3 bucket, DynamoDB
+  table and related IAM roles for AWS Lambda Real-time Stream Processing Reference
+  Architecture. PLEASE NOTE: The CloudFormation Stack Name must be all lowercase as
+  it is used as part of the S3 bucket name. Otherwise the stack creation will fail.'
+Parameters:
+  LambdaS3Bucket:
+    Type: String
+    Description: Name of S3 bucket where Lambda function packages are stored.
+    Default: awslambda-reference-architectures
+  LambdaDDBEventProcessorS3Key:
+    Type: String
+    Default: stream-processing/ddb_eventprocessor.zip
+    Description: Name of S3 key for Zip with Stream Processing DynamoDB Event Processor
+      Lambda function package.
+  LambdaDDBEventProcessorHandler:
+    Type: String
+    Default: ddb_eventprocessor.handler
+    Description: Name of handler for Stream Processing DynamoDB Event Processor Lambda
+      function.
+Resources:
+  streamprocessingclient:
+    Type: AWS::IAM::User
+  ClientPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: StreamProcessingClientPolicy
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action: ['kinesis:Put*']
+          Resource: !Join ['', ['arn:aws:kinesis:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId',
+              ':stream/', !Ref 'EventStream']]
+      Users: [!Ref 'streamprocessingclient']
+  ClientKeys:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref 'streamprocessingclient'
+  EventStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+  DDBEventProcessor:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Stream Processing DDB Event Processor
+      Handler: !Ref 'LambdaDDBEventProcessorHandler'
+      MemorySize: 128
+      Role: !GetAtt [EventProcessorExecutionRole, Arn]
+      Timeout: 10
+      Runtime: nodejs
+      Code:
+        S3Bucket: !Ref 'LambdaS3Bucket'
+        S3Key: !Ref 'LambdaDDBEventProcessorS3Key'
+  EventProcessorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [lambda.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: EventProcessorExecutionPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: ['logs:*']
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action: ['dynamodb:BatchWriteItem']
+            Resource: !Join ['', ['arn:aws:dynamodb:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId',
+                ':table/', !Ref 'AWS::StackName', -EventData]]
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole']
+  MapLambdaEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref 'DDBEventProcessor'
+      StartingPosition: TRIM_HORIZON
+      BatchSize: 25
+      EventSourceArn: !Join ['', ['arn:aws:kinesis:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId',
+          ':stream/', !Ref 'EventStream']]
+  EventDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: Username
+        AttributeType: S
+      - AttributeName: Timestamp
+        AttributeType: S
+      KeySchema:
+      - AttributeName: Username
+        KeyType: HASH
+      - AttributeName: Timestamp
+        KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: '1'
+        WriteCapacityUnits: '1'
+      TableName: !Join ['', [!Ref 'AWS::StackName', -EventData]]
+Outputs:
+  AccessKeyId:
+    Value: !Ref 'ClientKeys'
+    Description: AWS Access Key Id of stream processing client user
+  SecretAccessKey:
+    Value: !GetAtt [ClientKeys, SecretAccessKey]
+    Description: AWS Secret Key of stream processing client user
+  KinesisStream:
+    Value: !Ref 'EventStream'
+    Description: The Kinesis stream used for ingestion.
+  Region:
+    Value: !Ref 'AWS::Region'
+    Description: The region this template was launched in.
