@@ -29,7 +29,7 @@ Resources:
         - EventProcessorExecutionRole
         - Arn
       Timeout: 10
-      Runtime: nodejs6.10
+      Runtime: nodejs10.x
       CodeUri:
         Bucket: !Ref LambdaS3Bucket
         Key: !Ref LambdaDDBEventProcessorS3Key
